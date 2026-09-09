@@ -1,32 +1,35 @@
 from django.contrib import admin
 from django.urls import include, path
-from rest_framework_simplejwt.views import  TokenObtainPairView, TokenRefreshView
-from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularRedocView,
+    SpectacularSwaggerView,
+)
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+url_path = "api/v1"
 
 urlpatterns = [
-    path('admin/', admin.site.urls),  
-
+    path("admin/", admin.site.urls),
     # OpenAPI schema
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-
+    path(f"{url_path}/schema/", SpectacularAPIView.as_view(), name="schema"),
     # Swagger UI
-    path("api/docs/", SpectacularSwaggerView.as_view(), name="swagger-ui"),
-
+    path(f"{url_path}/docs/", SpectacularSwaggerView.as_view(), name="swagger-ui"),
     # Redoc UI
-    path("api/redoc/", SpectacularRedocView.as_view(), name="redoc"),
-
+    path(f"{url_path}/redoc/", SpectacularRedocView.as_view(), name="redoc"),
     # Authentication
-    path("api/auth/", include("apps.users.urls")),
-
+    path(f"{url_path}/auth/", include("apps.users.urls")),
     # JWT
     path(
-        "api/auth/login/",
+        f"{url_path}/auth/login/",
         TokenObtainPairView.as_view(),
         name="token_obtain_pair",
     ),
     path(
-        "api/auth/refresh/",
+        f"{url_path}/auth/refresh/",
         TokenRefreshView.as_view(),
         name="token_refresh",
     ),
+    # Orginizations
+    path(f"{url_path}/organizations/", include("apps.organizations.urls")),
 ]

@@ -3,6 +3,7 @@ from django.db import models
 
 from .managers import UserManager
 
+
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=255)
@@ -12,7 +13,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["full_name"]
-    
+
     objects = UserManager()
 
     def __str__(self):

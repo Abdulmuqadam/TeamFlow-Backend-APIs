@@ -1,5 +1,7 @@
 from rest_framework import serializers
+
 from .models import User
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -17,6 +19,7 @@ class UserSerializer(serializers.ModelSerializer):
             "email",
             "created_at",
         )
+
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -36,9 +39,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop("password")
 
-        user = User.objects.create_user(
-            password=password,
-            **validated_data
-        )
+        user = User.objects.create_user(password=password, **validated_data)
 
         return user
