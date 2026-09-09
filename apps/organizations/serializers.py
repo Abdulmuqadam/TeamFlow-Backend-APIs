@@ -67,3 +67,17 @@ class AddMemberSerializer(serializers.Serializer):
 
         attrs["user"] = user
         return attrs
+
+
+class UpdateMembershipSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Membership
+        fields = ("role",)
+
+    def validate_role(self, value):
+        if value == Membership.Role.OWNER:
+            raise serializers.ValidationError(
+                "Ownership cannot be assigned through this endpoint."
+            )
+
+        return value
