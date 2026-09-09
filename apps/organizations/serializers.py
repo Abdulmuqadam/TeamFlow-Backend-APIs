@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
 from .models import Membership, Organization
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -42,3 +45,25 @@ class MembershipSerializer(serializers.ModelSerializer):
             "id",
             "joined_at",
         )
+
+
+class AddMemberSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(
+        choices=[
+            Membership.Role.ADMIN,
+            Membership.Role.MEMBER,
+        ],
+        default=Membership.Role.MEMBER,
+    )
+
+    def validate(self, attrs):
+        try:
+            user = User.objects.get(email=attrs["email"])
+        except User.DoesNotExist:
+            raise serializers.ValidationError(
+                {"email": "No user exists with this email."}
+            )
+
+        attrs["user"] = user
+        return attrs
