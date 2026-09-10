@@ -1,70 +1,79 @@
 # TeamFlow API
 
-TeamFlow is a multi-tenant project-management API built with Django REST Framework. It provides email-based user accounts, JWT authentication, organizations, and role-based organization membership management.
+TeamFlow is a multi-tenant project-management REST API built with Django REST Framework. It provides email-based accounts, JWT authentication, organizations, role-based memberships, projects, and tasks.
 
-The project is currently an MVP foundation. The core identity and tenant membership flows are implemented, while automated test coverage and production hardening remain in progress.
+The project is currently an MVP backend foundation. The core identity, tenant isolation, organization, project, and task workflows are implemented. Automated coverage is strong for users and organizations, while project/task coverage and production hardening remain outstanding.
 
-## Product Scope
+## Current Scope
 
 ### Implemented
 
-- Custom user model authenticated by email
-- Public user registration and authenticated current-user endpoint
+- Custom user model with email login
+- User registration and current-user profile endpoint
 - JWT access and refresh tokens
-- Organization creation and organization listing for the current user
-- Organization memberships with `OWNER`, `ADMIN`, and `MEMBER` roles
-- Member invitation by an existing user's email address
-- Role updates and member removal with organization-level permission checks
-- OpenAPI schema, Swagger UI, and ReDoc documentation
-- Separate development and production settings modules
+- Organization creation and membership-scoped organization listing
+- Organization roles: `OWNER`, `ADMIN`, and `MEMBER`
+- Adding existing users to organizations by email
+- Organization member role changes and removals
+- Organization-scoped projects with `ACTIVE` and `ARCHIVED` statuses
+- Project-scoped tasks with status, priority, assignment, and due date
+- Tenant-aware permission checks for organizations, projects, and tasks
+- OpenAPI schema, Swagger UI, and ReDoc
+- Separate base, development, and production settings modules
 
-### Current Status
+### Project Status
 
-The application is suitable for continued API development and local integration work. It should not yet be treated as production-ready without completing the hardening items below:
+This repository is suitable for local development and API integration work. It is not yet production-ready. The most important remaining work is:
 
-- Add automated tests for authentication, tenant isolation, membership permissions, and validation.
-- Fix the organization slug generation path for updates to existing organizations.
-- Restrict membership updates to the role-only serializer for every update method, including `PUT`.
-- Complete production settings, including `ALLOWED_HOSTS`, database configuration, secret management, email backend, and deployment serving.
-- Register the custom models with Django admin if administrative management is required.
-- Add the project-management domain model and API surface beyond organizations and memberships.
+- Add API tests for projects and tasks, including tenant isolation and role enforcement.
+- Complete production settings, including `ALLOWED_HOSTS`, database configuration, secret management, email delivery, static files, and deployment serving.
+- Add rate limiting, structured logging, error monitoring, health checks, and backup procedures.
+- Decide whether Django admin needs model registrations and add them if required.
+- Add a declared project license.
 
 ## Technology Stack
 
-- Python
-- Django 6.1
-- Django REST Framework 3.18
-- Simple JWT
-- drf-spectacular for OpenAPI documentation
-- PostgreSQL for development configuration
+- Python 3.12+
+- Django 6.1.1
+- Django REST Framework 3.18.1
+- `djangorestframework-simplejwt` 5.5.1
+- `drf-spectacular` 0.30.0
+- PostgreSQL via Psycopg for development settings
 - SQLite fallback in the shared base settings
-- Ruff for formatting and lint-oriented code quality
+- Ruff for formatting
+
+All pinned dependencies are listed in [requirements.txt](requirements.txt).
 
 ## Architecture
 
 ```text
 config/
   settings/       Shared, development, and production configuration
-apps/users/       Custom user model, registration, and current-user API
-apps/organizations/
-                  Organizations, memberships, serializers, permissions, and API views
+apps/
+  users/          Custom user model, registration, login support, and profile API
+  organizations/  Organizations, memberships, serializers, permissions, and API
+  projects/       Projects, tasks, serializers, permissions, and API
 ```
 
-The application uses a through model, `Membership`, between users and organizations. This keeps tenant membership and role information explicit and allows access checks to be performed against the requested organization.
+The tenant hierarchy is:
 
-Authentication is configured globally with JWT Bearer tokens, and authenticated access is the default for API views. Organization and membership queries are scoped to the organization identifier and the requesting user's membership.
+```text
+User -> Membership -> Organization -> Project -> Task
+```
+
+`Membership` is an explicit through model between users and organizations. It stores the user's organization role and enforces one membership per user and organization. API queries and permission checks use the organization associated with the requested resource to prevent cross-tenant access.
 
 ## Requirements
 
 - Python 3.12 or newer
-- PostgreSQL 14 or newer for the development settings
-- A database and user matching the values in `.env`
-
-The pinned Python dependencies are listed in [requirements.txt](requirements.txt).
+- PostgreSQL 14 or newer when using `config.settings.development`
+- A PostgreSQL database and user matching the environment variables below
 
 ## Local Setup
 
-### 1. Create and activate a virtual environment
+The project runs with `config.settings.development` by default through `manage.py`.
+
+### 1. Create a virtual environment
 
 PowerShell:
 
@@ -82,25 +91,25 @@ pip install -r requirements.txt
 
 ### 3. Configure environment variables
 
-Copy `.env.example` to `.env` and set values appropriate for your local PostgreSQL instance:
+Create a local `.env` file from the provided template:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Required variables:
+Set values appropriate for the local PostgreSQL instance:
 
 | Variable | Purpose |
 | --- | --- |
-| `SECRET_KEY` | Django secret key |
+| `SECRET_KEY` | Django signing key; use a unique secret outside local development |
 | `DEBUG` | Enables development diagnostics when `True` |
 | `DB_NAME` | PostgreSQL database name |
-| `DB_USER` | PostgreSQL user |
+| `DB_USER` | PostgreSQL username |
 | `DB_PASSWORD` | PostgreSQL password |
 | `DB_HOST` | PostgreSQL host, commonly `localhost` |
 | `DB_PORT` | PostgreSQL port, commonly `5432` |
 
-The development settings currently require PostgreSQL SSL mode. Adjust the development database options if your local PostgreSQL server does not support SSL.
+The development database configuration currently uses PostgreSQL with `sslmode=require`. Change that option for a local PostgreSQL server that does not provide SSL.
 
 ### 4. Apply migrations
 
@@ -108,7 +117,7 @@ The development settings currently require PostgreSQL SSL mode. Adjust the devel
 python manage.py migrate
 ```
 
-### 5. Run the development server
+### 5. Start the development server
 
 ```powershell
 python manage.py runserver
@@ -118,72 +127,111 @@ The API is available at `http://127.0.0.1:8000/`.
 
 ## API Documentation
 
+The API is versioned under `/api/v1/`.
+
 | Resource | URL |
 | --- | --- |
 | Swagger UI | `http://127.0.0.1:8000/api/v1/docs/` |
 | ReDoc | `http://127.0.0.1:8000/api/v1/redoc/` |
 | OpenAPI schema | `http://127.0.0.1:8000/api/v1/schema/` |
 
-## API Reference
+## Authentication
 
-All API routes use the `/api/v1/` prefix.
+Protected endpoints require a JWT access token:
 
-### Authentication
-
-| Method | Endpoint | Access | Description |
-| --- | --- | --- | --- |
-| `POST` | `/auth/register/` | Public | Create a user with email, full name, and password |
-| `POST` | `/auth/login/` | Public | Obtain access and refresh JWTs |
-| `POST` | `/auth/refresh/` | Public | Obtain a new access token |
-| `GET` | `/auth/me/` | Authenticated | Return the current user's profile |
-
-Access protected endpoints with:
-
-```text
+```http
 Authorization: Bearer <access-token>
 ```
 
-Access tokens expire after 30 minutes. Refresh tokens expire after 7 days.
+Access tokens expire after 30 minutes. Refresh tokens expire after 7 days. Refresh token rotation and blacklisting are currently disabled.
+
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/auth/register/` | Public | Create an account with email, full name, and password |
+| `POST` | `/api/v1/auth/login/` | Public | Obtain access and refresh tokens |
+| `POST` | `/api/v1/auth/refresh/` | Public | Obtain a new access token |
+| `GET` | `/api/v1/auth/me/` | Authenticated | Return the current user's profile |
+
+Passwords must be at least eight characters when registering. Passwords are hashed through Django's user manager and are never returned by the API.
+
+## API Reference
 
 ### Organizations and memberships
 
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/organizations/` | List organizations where the current user is a member |
-| `POST` | `/organizations/` | Create an organization; the creator becomes `OWNER` |
-| `GET` | `/organizations/{organization_id}/members/` | List organization members |
-| `POST` | `/organizations/{organization_id}/members/` | Add an existing user by email; owner/admin only |
-| `GET` | `/organizations/{organization_id}/members/{membership_id}/` | Retrieve a membership |
-| `PATCH` | `/organizations/{organization_id}/members/{membership_id}/` | Change a member role; owner/admin only |
-| `DELETE` | `/organizations/{organization_id}/members/{membership_id}/` | Remove a member; owner/admin only |
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/organizations/` | Authenticated | List organizations where the current user is a member |
+| `POST` | `/api/v1/organizations/` | Authenticated | Create an organization; the creator becomes `OWNER` |
+| `GET` | `/api/v1/organizations/{organization_id}/members/` | Organization member | List memberships |
+| `POST` | `/api/v1/organizations/{organization_id}/members/` | Owner or admin | Add an existing user by email |
+| `GET` | `/api/v1/organizations/{organization_id}/members/{membership_id}/` | Organization member | Retrieve a membership |
+| `PATCH` | `/api/v1/organizations/{organization_id}/members/{membership_id}/` | Owner or admin | Change a member's role |
+| `DELETE` | `/api/v1/organizations/{organization_id}/members/{membership_id}/` | Owner or admin | Remove a member |
 
-Owners cannot be reassigned or removed through the membership API. Members can view membership data but cannot manage it.
+Ownership cannot be reassigned or removed through the membership API. Members can read membership data but cannot manage it. A user cannot remove themself from an organization through this endpoint.
 
-## Useful Commands
+### Projects
+
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/organizations/{organization_id}/projects/` | Organization member | List projects in an organization |
+| `POST` | `/api/v1/organizations/{organization_id}/projects/` | Owner or admin | Create a project in an organization |
+| `GET` | `/api/v1/projects/{project_id}/` | Organization member | Retrieve a project |
+| `PUT` / `PATCH` | `/api/v1/projects/{project_id}/` | Owner or admin | Update a project |
+| `DELETE` | `/api/v1/projects/{project_id}/` | Owner or admin | Delete a project |
+
+Projects are automatically associated with the organization in the URL and record the authenticated creator.
+
+### Tasks
+
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/projects/{project_id}/tasks/` | Organization member | List tasks in a project |
+| `POST` | `/api/v1/projects/{project_id}/tasks/` | Owner or admin | Create a task |
+| `GET` | `/api/v1/tasks/{task_id}/` | Organization member | Retrieve a task |
+| `PUT` / `PATCH` | `/api/v1/tasks/{task_id}/` | Owner/admin, or assigned member | Update a task |
+| `DELETE` | `/api/v1/tasks/{task_id}/` | Owner or admin | Delete a task |
+
+Tasks support the statuses `TODO`, `IN_PROGRESS`, and `DONE`, and the priorities `LOW`, `MEDIUM`, and `HIGH`. Assignment is optional. Regular members may update only tasks assigned to them.
+
+## Role Permissions
+
+| Capability | Owner | Admin | Member |
+| --- | :---: | :---: | :---: |
+| View organization and memberships | Yes | Yes | Yes |
+| Add organization members | Yes | Yes | No |
+| Change non-owner member roles | Yes | Yes | No |
+| Remove non-owner members | Yes | Yes | No |
+| Create, update, or delete projects | Yes | Yes | No |
+| Create tasks | Yes | Yes | No |
+| View tasks | Yes | Yes | Yes |
+| Update assigned tasks | Yes | Yes | Own assignments only |
+| Delete tasks | Yes | Yes | No |
+
+## Testing and Quality Checks
+
+Run the Django checks and test suite with:
 
 ```powershell
-# Run Django system checks
 python manage.py check
-
-# Run the test suite
 python manage.py test
-
-# Format Python files
-ruff format .
-
-# Create a superuser for Django admin
-python manage.py createsuperuser
 ```
 
-The current test modules are placeholders, so a passing test command does not yet represent meaningful behavioral coverage. Add tests before using the result as a release gate.
+Format Python code with:
+
+```powershell
+ruff format .
+```
+
+Test modules contain coverage for user authentication and organization membership behavior, including duplicate memberships, role restrictions, owner protection, and tenant visibility. `apps/projects/tests.py` is currently a placeholder. At present, Django reports `NO TESTS RAN` with the default test command, so test discovery should be repaired before treating the suite as a release gate.
 
 ## Security and Operations Notes
 
-- Never commit `.env` or place real credentials in documentation. The file is ignored by Git; rotate any credential that may have been exposed elsewhere.
-- Use a unique, unpredictable `SECRET_KEY` outside local development.
-- Set explicit production `ALLOWED_HOSTS` and configure a managed production database.
-- Review membership update behavior before exposing the API to untrusted clients; updates should accept only fields intentionally permitted by the role-management contract.
-- Add request logging, error monitoring, rate limiting, backup policy, and a deployment health check before production launch.
+- Do not commit `.env` or real credentials.
+- Use a strong, unique `SECRET_KEY` outside local development.
+- Configure explicit production `ALLOWED_HOSTS`; the production settings currently leave it empty.
+- Review database SSL, secret loading, email delivery, static files, and serving configuration before deployment.
+- Add rate limiting, request logging, error monitoring, health checks, backups, and a deployment process before exposing the API publicly.
 
 ## License
 
