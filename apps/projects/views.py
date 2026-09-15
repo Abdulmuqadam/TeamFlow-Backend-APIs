@@ -7,6 +7,7 @@ from .models import Project, Task
 from .serializers import ProjectSerializer, TaskSerializer
 from django.shortcuts import get_object_or_404
 from .permissions import IsOrganizationAdminForProject, IsOrganizationMemberForProject
+from .pagination import TaskPagination
 
 
 class OrganizationProjectListCreateView(generics.ListCreateAPIView):
@@ -79,15 +80,52 @@ class ProjectDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class ProjectTaskListCreateView(generics.ListCreateAPIView):
     serializer_class = TaskSerializer
+    pagination_class = TaskPagination
     permission_classes = [
         IsAuthenticated,
     ]
 
-    def get_project(self):
-        return get_object_or_404(
-            Project,
-            id=self.kwargs["project_id"],
+    def get_queryset(self):
+        project = self.get_project()
+
+        is_member = Membership.objects.filter(
+            user=self.request.user,
+            organization=project.organization,
+        ).exists()
+
+        if not is_member:
+            raise PermissionDenied("You are not a member of this organization.")
+
+        queryset = Task.objects.filter(
+            project=project,
+        ).select_related(
+            "project",
+            "assigned_to",
+            "created_by",
         )
+
+        status = self.request.query_params.get("status")
+
+        if status:
+            queryset = queryset.filter(
+                status=status,
+            )
+
+        priority = self.request.query_params.get("priority")
+
+        if priority:
+            queryset = queryset.filter(
+                priority=priority,
+            )
+
+        assigned_to = self.request.query_params.get("assigned_to")
+
+        if assigned_to:
+            queryset = queryset.filter(
+                assigned_to_id=assigned_to,
+            )
+
+        return queryset
 
     def get_queryset(self):
         project = self.get_project()
