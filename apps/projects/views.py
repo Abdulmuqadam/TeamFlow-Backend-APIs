@@ -1,13 +1,18 @@
+from django.db import models
+from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404
 from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
 from apps.organizations.models import Membership
 from apps.projects.permissions import IsOrganizationAdminForOrganization
+
 from .models import Project, Task
-from .serializers import ProjectSerializer, TaskSerializer
-from django.shortcuts import get_object_or_404
-from .permissions import IsOrganizationAdminForProject, IsOrganizationMemberForProject
 from .pagination import TaskPagination
+from .permissions import IsOrganizationAdminForProject, IsOrganizationMemberForProject
+from .serializers import ProjectSerializer, TaskSerializer
 
 
 class OrganizationProjectListCreateView(generics.ListCreateAPIView):
@@ -85,8 +90,11 @@ class ProjectTaskListCreateView(generics.ListCreateAPIView):
         IsAuthenticated,
     ]
 
-    def get_queryset(self):
-        project = self.get_project()
+    def get_project(self):
+        project = get_object_or_404(
+            Project.objects.select_related("organization"),
+            id=self.kwargs["project_id"],
+        )
 
         is_member = Membership.objects.filter(
             user=self.request.user,
@@ -95,6 +103,16 @@ class ProjectTaskListCreateView(generics.ListCreateAPIView):
 
         if not is_member:
             raise PermissionDenied("You are not a member of this organization.")
+
+        return project
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["project"] = self.get_project()
+        return context
+
+    def get_queryset(self):
+        project = self.get_project()
 
         queryset = Task.objects.filter(
             project=project,
@@ -105,46 +123,38 @@ class ProjectTaskListCreateView(generics.ListCreateAPIView):
         )
 
         status = self.request.query_params.get("status")
-
         if status:
-            queryset = queryset.filter(
-                status=status,
-            )
+            queryset = queryset.filter(status=status)
 
         priority = self.request.query_params.get("priority")
-
         if priority:
-            queryset = queryset.filter(
-                priority=priority,
-            )
+            queryset = queryset.filter(priority=priority)
 
         assigned_to = self.request.query_params.get("assigned_to")
-
         if assigned_to:
+            queryset = queryset.filter(assigned_to_id=assigned_to)
+
+        search = self.request.query_params.get("search")
+        if search:
             queryset = queryset.filter(
-                assigned_to_id=assigned_to,
+                models.Q(title__icontains=search)
+                | models.Q(description__icontains=search)
             )
 
+        ordering = self.request.query_params.get("ordering", "-created_at")
+        allowed_orderings = {
+            "created_at",
+            "-created_at",
+            "due_date",
+            "-due_date",
+            "priority",
+            "-priority",
+        }
+
+        if ordering in allowed_orderings:
+            queryset = queryset.order_by(ordering)
+
         return queryset
-
-    def get_queryset(self):
-        project = self.get_project()
-
-        is_member = Membership.objects.filter(
-            user=self.request.user,
-            organization=project.organization,
-        ).exists()
-
-        if not is_member:
-            raise PermissionDenied("You are not a member of this organization.")
-
-        return Task.objects.filter(
-            project=project,
-        ).select_related(
-            "project",
-            "assigned_to",
-            "created_by",
-        )
 
     def perform_create(self, serializer):
         project = self.get_project()
@@ -164,6 +174,39 @@ class ProjectTaskListCreateView(generics.ListCreateAPIView):
         serializer.save(
             project=project,
             created_by=self.request.user,
+        )
+
+
+class ProjectStatsView(generics.RetrieveAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        project = get_object_or_404(
+            Project.objects.select_related("organization"),
+            id=kwargs["project_id"],
+        )
+
+        is_member = Membership.objects.filter(
+            user=request.user,
+            organization=project.organization,
+        ).exists()
+
+        if not is_member:
+            raise PermissionDenied("You are not a member of this organization.")
+
+        stats = project.tasks.aggregate(
+            total_tasks=Count("id"),
+            todo=Count("id", filter=Q(status=Task.Status.TODO)),
+            in_progress=Count("id", filter=Q(status=Task.Status.IN_PROGRESS)),
+            done=Count("id", filter=Q(status=Task.Status.DONE)),
+        )
+
+        return Response(
+            {
+                "project_id": project.id,
+                "project_name": project.name,
+                **stats,
+            }
         )
 
 

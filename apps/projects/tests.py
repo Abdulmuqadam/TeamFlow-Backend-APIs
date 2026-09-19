@@ -249,7 +249,8 @@ class TaskApiTests(APITestCase):
         response = self.client.get(self.task_list_url())
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual([item["id"] for item in response.data], [self.task.pk])
+        self.assertIn("results", response.data)
+        self.assertEqual([item["id"] for item in response.data["results"]], [self.task.pk])
 
     def test_non_member_cannot_list_tasks_from_another_organization(self):
         self.authenticate(self.member)

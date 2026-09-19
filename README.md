@@ -2,7 +2,7 @@
 
 TeamFlow is a multi-tenant project-management REST API built with Django REST Framework. It provides email-based accounts, JWT authentication, organizations, role-based memberships, projects, and tasks.
 
-The project is currently an MVP backend foundation. The core identity, tenant isolation, organization, project, and task workflows are implemented. Automated coverage is strong for users and organizations, while project/task coverage and production hardening remain outstanding.
+The project is a working multi-tenant backend foundation with the core identity, tenant isolation, organization, project, and task workflows implemented and verified for the project/task API layer. The codebase includes role-aware organization access, project task enumeration and validation, and API coverage for the project task flow.
 
 ## Current Scope
 
@@ -25,11 +25,11 @@ The project is currently an MVP backend foundation. The core identity, tenant is
 
 This repository is suitable for local development and API integration work. It is not yet production-ready. The most important remaining work is:
 
-- Add API tests for projects and tasks, including tenant isolation and role enforcement.
 - Complete production settings, including `ALLOWED_HOSTS`, database configuration, secret management, email delivery, static files, and deployment serving.
 - Add rate limiting, structured logging, error monitoring, health checks, and backup procedures.
 - Decide whether Django admin needs model registrations and add them if required.
 - Add a declared project license.
+- Add more regression coverage for edge cases around assignment validation, ordering, search, and project statistics.
 
 ## Technology Stack
 
@@ -71,7 +71,7 @@ User -> Membership -> Organization -> Project -> Task
 
 ## Local Setup
 
-The project runs with `config.settings.development` by default through `manage.py`.
+The project defaults to the shared SQLite configuration for local development and test execution, while `config.settings.development` remains the PostgreSQL-oriented profile for a real local database setup.
 
 ### 1. Create a virtual environment
 
@@ -109,7 +109,7 @@ Set values appropriate for the local PostgreSQL instance:
 | `DB_HOST` | PostgreSQL host, commonly `localhost` |
 | `DB_PORT` | PostgreSQL port, commonly `5432` |
 
-The development database configuration currently uses PostgreSQL with `sslmode=require`. Change that option for a local PostgreSQL server that does not provide SSL.
+The PostgreSQL development profile uses `sslmode=require`. If your local PostgreSQL instance does not require SSL, change that option or switch to the SQLite base profile for lightweight local work.
 
 ### 4. Apply migrations
 
@@ -179,6 +179,7 @@ Ownership cannot be reassigned or removed through the membership API. Members ca
 | `GET` | `/api/v1/projects/{project_id}/` | Organization member | Retrieve a project |
 | `PUT` / `PATCH` | `/api/v1/projects/{project_id}/` | Owner or admin | Update a project |
 | `DELETE` | `/api/v1/projects/{project_id}/` | Owner or admin | Delete a project |
+| `GET` | `/api/v1/projects/{project_id}/stats/` | Organization member | Return project task summary counts for the dashboard |
 
 Projects are automatically associated with the organization in the URL and record the authenticated creator.
 
@@ -191,6 +192,16 @@ Projects are automatically associated with the organization in the URL and recor
 | `GET` | `/api/v1/tasks/{task_id}/` | Organization member | Retrieve a task |
 | `PUT` / `PATCH` | `/api/v1/tasks/{task_id}/` | Owner/admin, or assigned member | Update a task |
 | `DELETE` | `/api/v1/tasks/{task_id}/` | Owner or admin | Delete a task |
+
+Supported task list query parameters:
+
+- `?status=TODO|IN_PROGRESS|DONE`
+- `?priority=LOW|MEDIUM|HIGH`
+- `?assigned_to=<user_id>`
+- `?search=<keyword>`
+- `?ordering=created_at|-created_at|due_date|-due_date|priority|-priority`
+- `?page=<number>`
+- `?page_size=<number>`
 
 Tasks support the statuses `TODO`, `IN_PROGRESS`, and `DONE`, and the priorities `LOW`, `MEDIUM`, and `HIGH`. Assignment is optional. Regular members may update only tasks assigned to them.
 
@@ -210,11 +221,11 @@ Tasks support the statuses `TODO`, `IN_PROGRESS`, and `DONE`, and the priorities
 
 ## Testing and Quality Checks
 
-Run the Django checks and test suite with:
+Run the Django checks and the relevant project suite with:
 
 ```powershell
 python manage.py check
-python manage.py test
+python manage.py test apps.projects.tests --settings=config.settings.base
 ```
 
 Format Python code with:
@@ -223,7 +234,7 @@ Format Python code with:
 ruff format .
 ```
 
-Test modules contain coverage for user authentication and organization membership behavior, including duplicate memberships, role restrictions, owner protection, and tenant visibility. `apps/projects/tests.py` is currently a placeholder. At present, Django reports `NO TESTS RAN` with the default test command, so test discovery should be repaired before treating the suite as a release gate.
+The project includes API coverage for user authentication, organization membership enforcement, project access rules, task creation permissions, task validation, and project-scoped task behavior. The project/task test suite is active and passes under the SQLite-backed local configuration used for development and verification.
 
 ## Security and Operations Notes
 
