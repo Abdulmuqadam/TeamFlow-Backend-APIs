@@ -1,6 +1,7 @@
 from rest_framework.permissions import BasePermission
 
 from apps.organizations.models import Membership
+
 from .models import Project
 
 

@@ -107,3 +107,12 @@ class TaskSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+
+class ProjectStatsSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    total_tasks = serializers.IntegerField()
+    todo = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
+    done = serializers.IntegerField()

@@ -4,15 +4,19 @@ from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
+from typing import cast
 
+from apps.activity.models import Activity
+from apps.activity.services import record_task_activity
 from apps.organizations.models import Membership
 from apps.projects.permissions import IsOrganizationAdminForOrganization
 
 from .models import Project, Task
 from .pagination import TaskPagination
 from .permissions import IsOrganizationAdminForProject, IsOrganizationMemberForProject
-from .serializers import ProjectSerializer, TaskSerializer
+from .serializers import ProjectSerializer, ProjectStatsSerializer, TaskSerializer
 
 
 class OrganizationProjectListCreateView(generics.ListCreateAPIView):
@@ -113,6 +117,7 @@ class ProjectTaskListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         project = self.get_project()
+        request = cast(Request, self.request)
 
         queryset = Task.objects.filter(
             project=project,
@@ -122,26 +127,26 @@ class ProjectTaskListCreateView(generics.ListCreateAPIView):
             "created_by",
         )
 
-        status = self.request.query_params.get("status")
+        status = request.query_params.get("status")
         if status:
             queryset = queryset.filter(status=status)
 
-        priority = self.request.query_params.get("priority")
+        priority = request.query_params.get("priority")
         if priority:
             queryset = queryset.filter(priority=priority)
 
-        assigned_to = self.request.query_params.get("assigned_to")
+        assigned_to = request.query_params.get("assigned_to")
         if assigned_to:
             queryset = queryset.filter(assigned_to_id=assigned_to)
 
-        search = self.request.query_params.get("search")
+        search = request.query_params.get("search")
         if search:
             queryset = queryset.filter(
                 models.Q(title__icontains=search)
                 | models.Q(description__icontains=search)
             )
 
-        ordering = self.request.query_params.get("ordering", "-created_at")
+        ordering = request.query_params.get("ordering", "-created_at")
         allowed_orderings = {
             "created_at",
             "-created_at",
@@ -171,13 +176,21 @@ class ProjectTaskListCreateView(generics.ListCreateAPIView):
         if not is_admin:
             raise PermissionDenied("Only organization admins can create tasks.")
 
-        serializer.save(
+        task = serializer.save(
             project=project,
             created_by=self.request.user,
         )
 
+        record_task_activity(
+            task=task,
+            actor=self.request.user,
+            action=Activity.Action.TASK_CREATED,
+            message=f'Created task "{task.title}"',
+        )
 
-class ProjectStatsView(generics.RetrieveAPIView):
+
+class ProjectStatsView(generics.GenericAPIView):
+    serializer_class = ProjectStatsSerializer
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
@@ -194,7 +207,7 @@ class ProjectStatsView(generics.RetrieveAPIView):
         if not is_member:
             raise PermissionDenied("You are not a member of this organization.")
 
-        stats = project.tasks.aggregate(
+        stats = Task.objects.filter(project=project).aggregate(
             total_tasks=Count("id"),
             todo=Count("id", filter=Q(status=Task.Status.TODO)),
             in_progress=Count("id", filter=Q(status=Task.Status.IN_PROGRESS)),
@@ -202,11 +215,13 @@ class ProjectStatsView(generics.RetrieveAPIView):
         )
 
         return Response(
-            {
-                "project_id": project.id,
-                "project_name": project.name,
-                **stats,
-            }
+            self.get_serializer(
+                {
+                    "project_id": project.pk,
+                    "project_name": project.name,
+                    **stats,
+                }
+            ).data
         )
 
 
@@ -247,20 +262,48 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
             organization=task.project.organization,
         )
 
-        # Admins and owners can update any task
-        if membership.role in [
-            Membership.Role.OWNER,
-            Membership.Role.ADMIN,
-        ]:
-            serializer.save()
-            return
+        if (
+            membership.role
+            not in [
+                Membership.Role.OWNER,
+                Membership.Role.ADMIN,
+            ]
+            and task.assigned_to != self.request.user
+        ):
+            raise PermissionDenied("You can only update tasks assigned to you.")
 
-        # Regular members can update tasks assigned to them
-        if task.assigned_to == self.request.user:
-            serializer.save()
-            return
+        old_status = task.status
+        old_assignee_id = task.assigned_to.pk if task.assigned_to else None
 
-        raise PermissionDenied("You can only update tasks assigned to you.")
+        updated_task = serializer.save()
+
+        if old_status != updated_task.status:
+            record_task_activity(
+                task=updated_task,
+                actor=self.request.user,
+                action=Activity.Action.STATUS_CHANGED,
+                message=(f"Changed status from {old_status} to {updated_task.status}"),
+                metadata={
+                    "old_status": old_status,
+                    "new_status": updated_task.status,
+                },
+            )
+
+        new_assignee_id = (
+            updated_task.assigned_to.pk if updated_task.assigned_to else None
+        )
+
+        if old_assignee_id != new_assignee_id:
+            record_task_activity(
+                task=updated_task,
+                actor=self.request.user,
+                action=Activity.Action.TASK_ASSIGNED,
+                message="Changed task assignment",
+                metadata={
+                    "old_assignee_id": old_assignee_id,
+                    "new_assignee_id": new_assignee_id,
+                },
+            )
 
     def perform_destroy(self, instance):
         membership = get_object_or_404(

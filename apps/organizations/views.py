@@ -1,15 +1,15 @@
-from rest_framework import generics, status
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
-from .models import Organization, Membership
+from .models import Membership, Organization
 from .permissions import IsOrganizationAdmin, IsOrganizationMember
 from .serializers import (
-    OrganizationSerializer,
-    MembershipSerializer,
     AddMemberSerializer,
+    MembershipSerializer,
+    OrganizationSerializer,
     UpdateMembershipSerializer,
 )
 
@@ -89,6 +89,7 @@ class OrganizationMemberListView(generics.ListCreateAPIView):
 
 
 class OrganizationMemberDetailView(generics.RetrieveUpdateDestroyAPIView):
+    http_method_names = ["get", "patch", "delete", "head", "options"]
     permission_classes = [
         IsAuthenticated,
         IsOrganizationMember,

@@ -1,3 +1,4 @@
+from django.db import IntegrityError
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -255,5 +256,5 @@ class OrganizationApiTests(APITestCase):
         organization = self.create_organization()
         self.add_membership(organization, self.member)
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(IntegrityError):
             self.add_membership(organization, self.member)

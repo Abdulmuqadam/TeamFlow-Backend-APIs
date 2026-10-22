@@ -20,11 +20,11 @@ class Organization(models.Model):
             slug = base_slug
             counter = 1
 
-        while Organization.objects.filter(slug=slug).exists():
-            slug = f"{base_slug}-{counter}"
-            counter += 1
+            while Organization.objects.filter(slug=slug).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
 
-        self.slug = slug
+            self.slug = slug
 
         super().save(*args, **kwargs)
 

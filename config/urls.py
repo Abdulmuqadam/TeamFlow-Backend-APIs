@@ -34,4 +34,6 @@ urlpatterns = [
     path(f"{url_path}/organizations/", include("apps.organizations.urls")),
     # Projects
     path(f"{url_path}/", include("apps.projects.urls")),
+    # Activity
+    path(f"{url_path}/", include("apps.activity.urls")),
 ]

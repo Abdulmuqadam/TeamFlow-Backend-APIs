@@ -8,7 +8,6 @@ from .views import (
     TaskDetailView,
 )
 
-
 urlpatterns = [
     path(
         "organizations/<int:organization_id>/projects/",
