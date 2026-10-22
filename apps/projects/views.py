@@ -1,3 +1,5 @@
+from typing import cast
+
 from django.db import models
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
@@ -6,9 +8,12 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
-from typing import cast
 
 from apps.activity.models import Activity
+from apps.activity.notification_services import (
+    notify_task_assigned,
+    notify_task_status_changed,
+)
 from apps.activity.services import record_task_activity
 from apps.organizations.models import Membership
 from apps.projects.permissions import IsOrganizationAdminForOrganization
@@ -277,6 +282,16 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
 
         updated_task = serializer.save()
 
+        if (
+            old_assignee_id != updated_task.assigned_to_id
+            and updated_task.assigned_to is not None
+        ):
+            notify_task_assigned(
+                task=updated_task,
+                recipient=updated_task.assigned_to,
+                actor=self.request.user,
+            )
+
         if old_status != updated_task.status:
             record_task_activity(
                 task=updated_task,
@@ -287,6 +302,19 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
                     "old_status": old_status,
                     "new_status": updated_task.status,
                 },
+            )
+
+        if (
+            old_status != updated_task.status
+            and updated_task.assigned_to is not None
+            and updated_task.assigned_to != self.request.user
+        ):
+            notify_task_status_changed(
+                task=updated_task,
+                recipient=updated_task.assigned_to,
+                actor=self.request.user,
+                old_status=old_status,
+                new_status=updated_task.status,
             )
 
         new_assignee_id = (

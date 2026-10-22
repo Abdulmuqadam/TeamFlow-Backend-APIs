@@ -4,6 +4,8 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.activity.models import Activity
+from apps.activity.notification_models import Notification
 from apps.organizations.models import Membership, Organization
 from apps.users.models import User
 
@@ -39,7 +41,9 @@ class ProjectApiTests(APITestCase):
         )
 
     def create_user(self, email, full_name):
-        return User.objects.create_user(email, full_name, "password123")
+        return User.objects.create_user(  # pyright: ignore[reportAttributeAccessIssue]
+            email, full_name, "password123"
+        )
 
     def add_membership(self, organization, user, role=Membership.Role.MEMBER):
         return Membership.objects.create(
@@ -240,6 +244,23 @@ class TaskApiTests(APITestCase):
         task = task or self.task
         return reverse("task-detail", kwargs={"task_id": task.pk})
 
+    def activity_url(self, task=None):
+        task = task or self.task
+        return reverse("task-activity", kwargs={"task_id": task.pk})
+
+    def stats_url(self, project=None):
+        project = project or self.project
+        return reverse("project-stats", kwargs={"project_id": project.pk})
+
+    def notification_list_url(self):
+        return reverse("notification-list")
+
+    def notification_read_url(self, notification):
+        return reverse("notification-mark-read", kwargs={"pk": notification.pk})
+
+    def notification_read_all_url(self):
+        return reverse("notification-mark-all-read")
+
     def authenticate(self, user):
         self.client.force_authenticate(user=user)
 
@@ -299,6 +320,277 @@ class TaskApiTests(APITestCase):
         self.assertEqual(response.data["priority"], Task.Priority.MEDIUM)
         self.assertEqual(response.data["assigned_to_email"], self.assignee.email)
         self.assertEqual(response.data["created_by_email"], self.admin.email)
+
+    def test_task_creation_records_activity(self):
+        self.authenticate(self.admin)
+
+        response = self.client.post(
+            self.task_list_url(),
+            {"title": "Document release"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        activity = Activity.objects.get(task_id=response.data["id"])
+        self.assertEqual(activity.action, Activity.Action.TASK_CREATED)
+        self.assertEqual(activity.actor, self.admin)
+        self.assertEqual(activity.message, 'Created task "Document release"')
+
+    def test_task_list_supports_filters_search_and_ordering(self):
+        second_task = Task.objects.create(
+            project=self.project,
+            title="Publish launch notes",
+            description="Prepare release notes",
+            status=Task.Status.DONE,
+            priority=Task.Priority.HIGH,
+            created_by=self.owner,
+        )
+        Task.objects.create(
+            project=self.project,
+            title="Unrelated work",
+            status=Task.Status.IN_PROGRESS,
+            priority=Task.Priority.LOW,
+            created_by=self.owner,
+        )
+        self.authenticate(self.member)
+
+        response = self.client.get(
+            self.task_list_url(),
+            {
+                "status": Task.Status.DONE,
+                "priority": Task.Priority.HIGH,
+                "search": "launch",
+                "ordering": "due_date",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [item["id"] for item in response.data["results"]], [second_task.pk]
+        )
+
+    def test_task_cannot_be_assigned_to_user_outside_organization(self):
+        self.authenticate(self.admin)
+
+        response = self.client.post(
+            self.task_list_url(),
+            {
+                "title": "Cross tenant assignment",
+                "assigned_to": self.outsider.pk,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("assigned_to", response.data)
+
+    def test_project_stats_are_scoped_and_count_each_task_status(self):
+        Task.objects.create(
+            project=self.project,
+            title="In progress task",
+            status=Task.Status.IN_PROGRESS,
+            created_by=self.owner,
+        )
+        Task.objects.create(
+            project=self.project,
+            title="Done task",
+            status=Task.Status.DONE,
+            created_by=self.owner,
+        )
+        self.authenticate(self.member)
+
+        response = self.client.get(self.stats_url())
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data,
+            {
+                "project_id": self.project.pk,
+                "project_name": self.project.name,
+                "total_tasks": 3,
+                "todo": 1,
+                "in_progress": 1,
+                "done": 1,
+            },
+        )
+
+    def test_non_member_cannot_view_project_stats(self):
+        self.authenticate(self.outsider)
+
+        response = self.client.get(self.stats_url())
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_task_activity_is_visible_to_organization_members_only(self):
+        activity = Activity.objects.create(
+            organization=self.organization,
+            project=self.project,
+            task=self.task,
+            actor=self.owner,
+            action=Activity.Action.TASK_CREATED,
+            message="Created task",
+        )
+        self.authenticate(self.member)
+
+        member_response = self.client.get(self.activity_url())
+
+        self.authenticate(self.outsider)
+        outsider_response = self.client.get(self.activity_url())
+
+        self.assertEqual(member_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(member_response.data[0]["id"], activity.pk)
+        self.assertEqual(member_response.data[0]["actor_email"], self.owner.email)
+        self.assertEqual(outsider_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_task_status_update_records_activity_and_notifies_assignee(self):
+        self.authenticate(self.admin)
+
+        response = self.client.patch(
+            self.task_url(),
+            {"status": Task.Status.IN_PROGRESS},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        activity = Activity.objects.get(
+            task=self.task,
+            action=Activity.Action.STATUS_CHANGED,
+        )
+        self.assertEqual(
+            activity.metadata,
+            {
+                "old_status": Task.Status.TODO,
+                "new_status": Task.Status.IN_PROGRESS,
+            },
+        )
+        notification = Notification.objects.get(recipient=self.assignee)
+        self.assertEqual(
+            notification.notification_type,
+            Notification.NotificationType.TASK_STATUS_CHANGED,
+        )
+        self.assertFalse(notification.is_read)
+
+    def test_task_assignment_creates_assignment_notification_and_activity(self):
+        self.authenticate(self.admin)
+
+        response = self.client.patch(
+            self.task_url(),
+            {"assigned_to": self.member.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        notification = Notification.objects.get(recipient=self.member)
+        self.assertEqual(
+            notification.notification_type,
+            Notification.NotificationType.TASK_ASSIGNED,
+        )
+        activity = Activity.objects.get(
+            task=self.task,
+            action=Activity.Action.TASK_ASSIGNED,
+        )
+        self.assertEqual(
+            activity.metadata["new_assignee_id"],
+            self.member.pk,
+        )
+
+    def test_editing_task_without_status_change_does_not_send_status_notification(self):
+        self.authenticate(self.admin)
+
+        response = self.client.patch(
+            self.task_url(),
+            {"title": "Updated title"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(
+            Notification.objects.filter(
+                recipient=self.assignee,
+                notification_type=Notification.NotificationType.TASK_STATUS_CHANGED,
+            ).exists()
+        )
+
+    def test_notifications_are_private_and_can_be_marked_read(self):
+        own_notification = Notification.objects.create(
+            recipient=self.assignee,
+            task=self.task,
+            notification_type=Notification.NotificationType.TASK_ASSIGNED,
+            message="Assigned to task",
+        )
+        Notification.objects.create(
+            recipient=self.member,
+            task=self.task,
+            notification_type=Notification.NotificationType.TASK_ASSIGNED,
+            message="Different recipient",
+        )
+        self.authenticate(self.assignee)
+
+        list_response = self.client.get(self.notification_list_url())
+        read_response = self.client.patch(
+            self.notification_read_url(own_notification),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(list_response.data), 1)
+        self.assertEqual(list_response.data[0]["task_title"], self.task.title)
+        self.assertEqual(read_response.status_code, status.HTTP_200_OK)
+        own_notification.refresh_from_db()
+        self.assertTrue(own_notification.is_read)
+
+    def test_notification_read_endpoints_cannot_modify_another_users_notification(self):
+        notification = Notification.objects.create(
+            recipient=self.assignee,
+            task=self.task,
+            notification_type=Notification.NotificationType.TASK_ASSIGNED,
+            message="Assigned to task",
+        )
+        self.authenticate(self.member)
+
+        response = self.client.patch(
+            self.notification_read_url(notification),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        notification.refresh_from_db()
+        self.assertFalse(notification.is_read)
+
+    def test_mark_all_notifications_read_returns_updated_count(self):
+        Notification.objects.create(
+            recipient=self.assignee,
+            task=self.task,
+            notification_type=Notification.NotificationType.TASK_ASSIGNED,
+            message="Unread one",
+        )
+        Notification.objects.create(
+            recipient=self.assignee,
+            task=self.task,
+            notification_type=Notification.NotificationType.TASK_STATUS_CHANGED,
+            message="Unread two",
+        )
+        Notification.objects.create(
+            recipient=self.member,
+            task=self.task,
+            notification_type=Notification.NotificationType.TASK_ASSIGNED,
+            message="Other user",
+        )
+        self.authenticate(self.assignee)
+
+        response = self.client.post(self.notification_read_all_url(), {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["updated_count"], 2)
+        self.assertEqual(
+            Notification.objects.filter(
+                recipient=self.assignee,
+                is_read=False,
+            ).count(),
+            0,
+        )
 
     def test_task_detail_is_readable_by_members_and_protected_from_outsiders(self):
         self.authenticate(self.member)
