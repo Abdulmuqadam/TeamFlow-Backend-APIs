@@ -17,6 +17,7 @@ from apps.activity.notification_services import (
 from apps.activity.services import record_task_activity
 from apps.organizations.models import Membership
 from apps.projects.permissions import IsOrganizationAdminForOrganization
+from apps.projects.services import update_task_with_events
 
 from .models import Project, Task
 from .pagination import TaskPagination
@@ -259,79 +260,10 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
         return task
 
     def perform_update(self, serializer):
-        task = self.get_object()
-
-        membership = get_object_or_404(
-            Membership,
-            user=self.request.user,
-            organization=task.project.organization,
+        update_task_with_events(
+            serializer=serializer,
+            actor=self.request.user,
         )
-
-        if (
-            membership.role
-            not in [
-                Membership.Role.OWNER,
-                Membership.Role.ADMIN,
-            ]
-            and task.assigned_to != self.request.user
-        ):
-            raise PermissionDenied("You can only update tasks assigned to you.")
-
-        old_status = task.status
-        old_assignee_id = task.assigned_to.pk if task.assigned_to else None
-
-        updated_task = serializer.save()
-
-        if (
-            old_assignee_id != updated_task.assigned_to_id
-            and updated_task.assigned_to is not None
-        ):
-            notify_task_assigned(
-                task=updated_task,
-                recipient=updated_task.assigned_to,
-                actor=self.request.user,
-            )
-
-        if old_status != updated_task.status:
-            record_task_activity(
-                task=updated_task,
-                actor=self.request.user,
-                action=Activity.Action.STATUS_CHANGED,
-                message=(f"Changed status from {old_status} to {updated_task.status}"),
-                metadata={
-                    "old_status": old_status,
-                    "new_status": updated_task.status,
-                },
-            )
-
-        if (
-            old_status != updated_task.status
-            and updated_task.assigned_to is not None
-            and updated_task.assigned_to != self.request.user
-        ):
-            notify_task_status_changed(
-                task=updated_task,
-                recipient=updated_task.assigned_to,
-                actor=self.request.user,
-                old_status=old_status,
-                new_status=updated_task.status,
-            )
-
-        new_assignee_id = (
-            updated_task.assigned_to.pk if updated_task.assigned_to else None
-        )
-
-        if old_assignee_id != new_assignee_id:
-            record_task_activity(
-                task=updated_task,
-                actor=self.request.user,
-                action=Activity.Action.TASK_ASSIGNED,
-                message="Changed task assignment",
-                metadata={
-                    "old_assignee_id": old_assignee_id,
-                    "new_assignee_id": new_assignee_id,
-                },
-            )
 
     def perform_destroy(self, instance):
         membership = get_object_or_404(
