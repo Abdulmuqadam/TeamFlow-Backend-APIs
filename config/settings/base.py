@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "apps.users",
     "apps.organizations",
     "apps.projects",
+    "apps.activity",
 ]
 
 AUTH_USER_MODEL = "users.User"
@@ -42,6 +43,17 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "Multi-Tenant Project Management API (TeamFlow)",
     "DESCRIPTION": "API documentation for the Multi-Tenant Project Management API (TeamFlow) project.",
     "VERSION": "1.0.0",
+    "ENUM_NAME_OVERRIDES": {
+        "OrganizationRole": [
+            ("OWNER", "Owner"),
+            ("ADMIN", "Admin"),
+            ("MEMBER", "Member"),
+        ],
+        "OrganizationMemberRole": [
+            ("ADMIN", "Admin"),
+            ("MEMBER", "Member"),
+        ],
+    },
 }
 
 SIMPLE_JWT = {
@@ -114,8 +126,12 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
-MAILERS = {
-    "default": {
-        "BACKEND": "django.core.mail.backends.console.EmailBackend",
-    },
-}
+EMAIL_BACKEND = config(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = config("EMAIL_HOST", default="")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
